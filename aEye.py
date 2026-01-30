@@ -53,5 +53,7 @@ while cap.isOpened():
         break
     
 cap.release()
+cv2.waitKey(1)
 cv2.destroyAllWindows()
+cv2.waitKey(1)
                 
