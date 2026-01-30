@@ -19,6 +19,12 @@ tts_stop_event = threading.Event()
 tts_enabled = True  # set False to start muted
 TTS_THROTTLE_SECONDS = 3
 
+# Debug / UI behavior
+debug_mode = False  # press 'd' to toggle verbose prints
+last_frame = None
+last_frame_time = 0
+STALE_FRAME_MAX_SECONDS = 5  # show last frame up to this many seconds if camera reads fail
+
 def tts_worker():
     last_msg = None
     last_time = 0
@@ -89,9 +95,14 @@ try:
     while True:
         if not cap.isOpened():
             # show placeholder while camera unavailable
-            frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(frame, "Camera not available. Press 'r' to retry or 'q' to quit.", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-            cv2.imshow("aEye Assistant", frame)
+            now = time.time()
+            if last_frame is not None and (now - last_frame_time) < STALE_FRAME_MAX_SECONDS:
+                disp = last_frame.copy()
+                cv2.putText(disp, "Camera unavailable — showing last frame", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+            else:
+                disp = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(disp, "Camera not available. Press 'r' to retry or 'q' to quit.", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+            cv2.imshow("aEye Assistant", disp)
             key = cv2.waitKey(100) & 0xFF
             if key == ord('r'):
                 try:
@@ -99,18 +110,30 @@ try:
                 except Exception:
                     pass
                 cap, cam_idx = find_camera(4)
+                if debug_mode:
+                    print(f"Retrying camera scan, got index: {cam_idx}")
                 continue
             elif key == ord('q'):
                 break
+            elif key == ord('d'):
+                debug_mode = not debug_mode
+                print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
+                continue
             else:
                 continue
 
         success, frame = cap.read()
-        if not success:
-            # show placeholder and allow retry
-            frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(frame, "No frame from camera. Press 'r' to retry", (50,240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255),2)
-            cv2.imshow("aEye Assistant", frame)
+        if not success or frame is None:
+            # show last valid frame if recent, else placeholder and allow retry
+            now = time.time()
+            if last_frame is not None and (now - last_frame_time) < STALE_FRAME_MAX_SECONDS:
+                disp = last_frame.copy()
+                cv2.putText(disp, "No frame (showing last). Press 'r' to retry.", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+                cv2.imshow("aEye Assistant", disp)
+            else:
+                frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(frame, "No frame from camera. Press 'r' to retry", (50,240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255),2)
+                cv2.imshow("aEye Assistant", frame)
             key = cv2.waitKey(100) & 0xFF
             if key == ord('r'):
                 try:
@@ -121,16 +144,35 @@ try:
                 continue
             elif key == ord('q'):
                 break
+            elif key == ord('d'):
+                debug_mode = not debug_mode
+                print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
+                continue
             else:
                 continue
 
-        #Run YOLO detection
-        results = model(frame, conf=0.5, verbose=False)
+        #Run YOLO detection (protected)
+        try:
+            results = model(frame, conf=0.5, verbose=False)
+            inference_error = None
+        except Exception as e:
+            results = []
+            inference_error = str(e)
+            if debug_mode:
+                print(f"YOLO inference error: {e}")
+
+        # record last good frame for fallback
+        if frame is not None:
+            last_frame = frame.copy()
+            last_frame_time = time.time()
 
         for r in results:
             for box in r.boxes:
                 #Safe access to xy and class
-                x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
+                try:
+                    x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
+                except Exception:
+                    continue
                 w_px = x2 - x1
                 if w_px <=0:
                     continue
@@ -141,11 +183,15 @@ try:
                 dist = round(1500 / w_px, 1) #Calibration constant
                 msg = f"{label} at {dist} meters"
 
-                "Draw on screen for your portfolio demo"
+                # Draw on screen
                 cv2.putText(frame, msg, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 # Enqueue message for the TTS worker (avoids spawning many threads)
                 speak(msg)
+
+        # Show inference error overlay if present
+        if inference_error is not None:
+            cv2.putText(frame, "Inference error - see console" , (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
 
         # Show TTS status and throttle on the frame
         status_text = f"TTS: {'ON' if tts_enabled else 'OFF'} | Throttle: {TTS_THROTTLE_SECONDS}s"
