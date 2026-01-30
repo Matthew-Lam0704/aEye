@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 import pyttsx3 as pyt
@@ -29,6 +30,11 @@ STALE_FRAME_MAX_SECONDS = 5  # show last frame up to this many seconds if camera
 BAD_FRAME_THRESHOLD = 30  # consecutive uniform frames before auto-restart
 bad_frame_count = 0
 PAUSE_MODE = False
+
+# Debug capture settings
+DEBUG_CAPTURE_DIR = "debug_captures"
+SAVE_ON_UNIFORM = True
+os.makedirs(DEBUG_CAPTURE_DIR, exist_ok=True)
 
 
 def frame_stats(f):
@@ -101,6 +107,7 @@ cap, cam_idx = find_camera(4)
 if cap is None or not cap.isOpened():
     cap = cv2.VideoCapture(0)
     cam_idx = 0
+print(f"[INFO] Using camera index: {cam_idx}, opened: {cap.isOpened()}")
 
 # Make the window visible and resizable
 cv2.namedWindow("aEye Assistant", cv2.WINDOW_NORMAL)
@@ -216,6 +223,15 @@ try:
             if std < 1.0 or nonzero < total * 0.01:
                 bad_frame_count += 1
                 cv2.putText(frame, "UNIFORM FRAME - attempting recovery soon", (10,80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+                # Save a debug capture for inspection
+                if SAVE_ON_UNIFORM:
+                    try:
+                        ts = int(time.time())
+                        fn = os.path.join(DEBUG_CAPTURE_DIR, f"uniform_cam{cam_idx}_{ts}_mean{int(mean)}_std{int(std)}.png")
+                        cv2.imwrite(fn, frame)
+                        print(f"[DEBUG] Saved uniform frame to {fn} (mean={mean:.1f}, std={std:.1f})")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to save uniform frame: {e}")
             else:
                 bad_frame_count = 0
 
@@ -295,6 +311,10 @@ try:
                     speak("Text to speech enabled")
                 except Exception:
                     pass
+        elif key == ord('d'):
+            # toggle debug mode from the main loop (works while running)
+            debug_mode = not debug_mode
+            print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
         elif key == ord('['):
             # decrease throttle window
             TTS_THROTTLE_SECONDS = max(0, TTS_THROTTLE_SECONDS - 1)
