@@ -9,19 +9,22 @@ model = YOLO('yolov8n.pt') #laptop can handle 'yolov8s.pt' for better accuracy
 
 def speak(text):
     """Function to run in a separate thread to prevent lag"""
-    if not engine.isBusy():
+    try:
         engine.say(text)
         engine.runAndWait()
+    except Exception as e:
+        print(f"Speech error: {e}")
         
 cap = cv2.VideoCapture(1) # 0 is usually the integrated laptop webcam
 
 while cap.isOpened():
     success, frame = cap.read()
-    if not success: 
+    if not success:
+        print("Error: Could not read from camera.") 
         break
     
     #Run YOLO detection
-    results = model(frame, conf=0.6, verbose=False)
+    results = model(frame, conf=0.5, verbose=False)
     
     for r in results:
         for box in r.boxes:
@@ -44,7 +47,7 @@ while cap.isOpened():
             if not threading.active_count() > 1:
                 threading.Thread(target=speak, args=(msg,), daemon=True).start()
             
-    cv2.imshow("Vision Assistant Demo", frame)
+    cv2.imshow("aEye Assisstant", frame)
     
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
