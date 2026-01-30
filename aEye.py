@@ -25,6 +25,22 @@ last_frame = None
 last_frame_time = 0
 STALE_FRAME_MAX_SECONDS = 5  # show last frame up to this many seconds if camera reads fail
 
+# Frame diagnostics and auto-restart
+BAD_FRAME_THRESHOLD = 30  # consecutive uniform frames before auto-restart
+bad_frame_count = 0
+PAUSE_MODE = False
+
+
+def frame_stats(f):
+    if f is None:
+        return None
+    gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+    mean = float(gray.mean())
+    std = float(gray.std())
+    nonzero = int((gray > 0).sum())
+    total = gray.size
+    return {'mean': mean, 'std': std, 'nonzero': nonzero, 'total': total} 
+
 def tts_worker():
     last_msg = None
     last_time = 0
@@ -123,6 +139,40 @@ try:
                 continue
 
         success, frame = cap.read()
+        # handle pause mode
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('p'):
+            PAUSE_MODE = not PAUSE_MODE
+            if debug_mode:
+                print(f"Pause mode {'ON' if PAUSE_MODE else 'OFF'}")
+        if PAUSE_MODE:
+            # show last frame while paused
+            if last_frame is not None:
+                disp = last_frame.copy()
+                cv2.putText(disp, "PAUSED (press 'p' to resume)", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+                cv2.imshow("aEye Assistant", disp)
+            else:
+                frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
+                cv2.putText(frame, "PAUSED (no frame yet). Press 'p' to resume", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255),2)
+                cv2.imshow("aEye Assistant", frame)
+            if key == ord('q'):
+                break
+            elif key == ord('r'):
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap, cam_idx = find_camera(4)
+                continue
+            elif key == ord('c'):
+                if last_frame is not None:
+                    fn = f"capture_{int(time.time())}.png"
+                    cv2.imwrite(fn, last_frame)
+                    print(f"Saved {fn}")
+                continue
+            else:
+                continue
+
         if not success or frame is None:
             # show last valid frame if recent, else placeholder and allow retry
             now = time.time()
@@ -150,6 +200,39 @@ try:
                 continue
             else:
                 continue
+
+        # compute frame diagnostics
+        stats = frame_stats(frame)
+        if stats is not None:
+            mean = stats['mean']
+            std = stats['std']
+            nonzero = stats['nonzero']
+            total = stats['total']
+            if debug_mode:
+                print(f"Frame stats - mean: {mean:.2f}, std: {std:.2f}, nonzero: {nonzero}/{total}")
+            # overlay stats
+            cv2.putText(frame, f"mean:{mean:.1f} std:{std:.1f}", (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,0), 2)
+            # detect uniform frame (likely gray or all white)
+            if std < 1.0 or nonzero < total * 0.01:
+                bad_frame_count += 1
+                cv2.putText(frame, "UNIFORM FRAME - attempting recovery soon", (10,80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+            else:
+                bad_frame_count = 0
+
+        # auto-restart camera if too many bad frames
+        if bad_frame_count > BAD_FRAME_THRESHOLD:
+            print("Detected many uniform frames, reinitializing camera...")
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap, cam_idx = find_camera(4)
+            bad_frame_count = 0
+            continue
+
+        # record last good frame for fallback
+        last_frame = frame.copy()
+        last_frame_time = time.time()
 
         #Run YOLO detection (protected)
         try:
