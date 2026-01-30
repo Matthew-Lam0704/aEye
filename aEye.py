@@ -2,6 +2,7 @@ import cv2
 import pyttsx3 as pyt
 import threading 
 from ultralytics import YOLO
+import subprocess
 
 #Initialize TTS engine
 engine = pyt.init(driverName='nsss')
@@ -10,10 +11,17 @@ model = YOLO('yolov8n.pt') #laptop can handle 'yolov8s.pt' for better accuracy
 def speak(text):
     """Function to run in a separate thread to prevent lag"""
     try:
-        engine.say(text)
-        engine.runAndWait()
-    except Exception as e:
-        print(f"Speech error: {e}")
+        if not engine.isBusy():
+            engine.say(text)
+            engine.runAndWait()
+            return
+    except Exception:
+        pass
+    #Fallback to macOS 'say' (non-blocking)
+    try:
+        subprocess.Popen(['say', text])
+    except Exception:
+        pass
         
 cap = cv2.VideoCapture(1) # 0 is usually the integrated laptop webcam
 
