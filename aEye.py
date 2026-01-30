@@ -4,7 +4,7 @@ import threading
 from ultralytics import YOLO
 
 #Initialize TTS engine
-engine = pyt.init()
+engine = pyt.init(driverName='nsss')
 model = YOLO('yolov8n.pt') #laptop can handle 'yolov8s.pt' for better accuracy
 
 def speak(text):
@@ -13,7 +13,7 @@ def speak(text):
         engine.say(text)
         engine.runAndWait()
         
-cap = cv2.VideoCapture(0) # 0 is usually the integrated laptop webcam
+cap = cv2.VideoCapture(1) # 0 is usually the integrated laptop webcam
 
 while cap.isOpened():
     success, frame = cap.read()
