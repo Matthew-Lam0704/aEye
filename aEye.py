@@ -9,7 +9,7 @@ model = YOLO('yolov8n.pt') #laptop can handle 'yolov8s.pt' for better accuracy
 
 def speak(text):
     """Function to run in a separate thread to prevent lag"""
-    if not engine._isBusy():
+    if not engine.isBusy():
         engine.say(text)
         engine.runAndWait()
         
