@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import pyttsx3 as pyt
 import threading
 import subprocess
@@ -66,14 +67,62 @@ def speak(text):
     except Exception:
         pass
         
-cap = cv2.VideoCapture(1) # 0 is usually the integrated laptop webcam
+def find_camera(max_idx=4):
+    for i in range(max_idx):
+        c = cv2.VideoCapture(i)
+        if c.isOpened():
+            return c, i
+        c.release()
+    return None, None
+
+cap, cam_idx = find_camera(4)
+if cap is None or not cap.isOpened():
+    cap = cv2.VideoCapture(0)
+    cam_idx = 0
+
+# Make the window visible and resizable
+cv2.namedWindow("aEye Assistant", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("aEye Assistant", 800, 600)
+cv2.moveWindow("aEye Assistant", 100, 100)
 
 try:
-    while cap.isOpened():
+    while True:
+        if not cap.isOpened():
+            # show placeholder while camera unavailable
+            frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(frame, "Camera not available. Press 'r' to retry or 'q' to quit.", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
+            cv2.imshow("aEye Assistant", frame)
+            key = cv2.waitKey(100) & 0xFF
+            if key == ord('r'):
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap, cam_idx = find_camera(4)
+                continue
+            elif key == ord('q'):
+                break
+            else:
+                continue
+
         success, frame = cap.read()
         if not success:
-            print("Error: Could not read from camera.") 
-            break
+            # show placeholder and allow retry
+            frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(frame, "No frame from camera. Press 'r' to retry", (50,240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255),2)
+            cv2.imshow("aEye Assistant", frame)
+            key = cv2.waitKey(100) & 0xFF
+            if key == ord('r'):
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap, cam_idx = find_camera(4)
+                continue
+            elif key == ord('q'):
+                break
+            else:
+                continue
 
         #Run YOLO detection
         results = model(frame, conf=0.5, verbose=False)
