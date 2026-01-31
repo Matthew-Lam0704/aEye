@@ -1,349 +1,199 @@
-import os
 import cv2
-import numpy as np
-import pyttsx3 as pyt
 import threading
 import subprocess
 import time
 import queue
+import os
 from ultralytics import YOLO
 
-#Initialize TTS engine
-engine = pyt.init(driverName='nsss')
-model = YOLO('yolov8n.pt') #laptop can handle 'yolov8s.pt' for better accuracy
+# --- CONFIG ---
+# Your custom-trained model for items/furniture
+CUSTOM_MODEL_NAME = 'yolo26n.pt' 
+# Standard lightweight pose model for skeleton/actions
+POSE_MODEL_NAME = 'yolo26n-pose.pt' 
 
-# Queue-based TTS worker to avoid spawning many threads and allow clean shutdown
+CONF_THRESH = 0.25 
+DIST_CALIB = 1500   
+SPEECH_DELAY = 8 
+
+# --- INITIALIZE MODELS ---
+print("Waking up the brains...")
+custom_brain = YOLO(CUSTOM_MODEL_NAME)
+pose_brain = YOLO(POSE_MODEL_NAME)
 tts_queue = queue.Queue()
-tts_stop_event = threading.Event()
 
-# Configurable TTS options
-tts_enabled = True  # set False to start muted
-TTS_THROTTLE_SECONDS = 3
-
-# Debug / UI behavior
-debug_mode = False  # press 'd' to toggle verbose prints
-last_frame = None
-last_frame_time = 0
-STALE_FRAME_MAX_SECONDS = 5  # show last frame up to this many seconds if camera reads fail
-
-# Frame diagnostics and auto-restart
-BAD_FRAME_THRESHOLD = 30  # consecutive uniform frames before auto-restart
-bad_frame_count = 0
-PAUSE_MODE = False
-
-# Debug capture settings
-DEBUG_CAPTURE_DIR = "debug_captures"
-SAVE_ON_UNIFORM = True
-os.makedirs(DEBUG_CAPTURE_DIR, exist_ok=True)
-
-
-def frame_stats(f):
-    if f is None:
-        return None
-    gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-    mean = float(gray.mean())
-    std = float(gray.std())
-    nonzero = int((gray > 0).sum())
-    total = gray.size
-    return {'mean': mean, 'std': std, 'nonzero': nonzero, 'total': total} 
+# --- FEATURE MATCHER SETUP (For your learned items) ---
+orb = cv2.ORB_create(nfeatures=1000)
+bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+learned_items = {}
+for file in os.listdir():
+    if file.endswith(".jpg"):
+        name = file.split(".")[0]
+        img = cv2.imread(file, 0)
+        if img is not None:
+            kp, des = orb.detectAndCompute(img, None)
+            if des is not None: 
+                learned_items[name] = {"kp": kp, "des": des}
 
 def tts_worker():
-    last_msg = None
-    last_time = 0
-    while not tts_stop_event.is_set():
-        try:
-            text = tts_queue.get(timeout=0.2)
-        except queue.Empty:
-            continue
-        if text is None:
-            break
-        if not tts_enabled:
-            # drop queued messages while muted
-            continue
-        now = time.time()
-        # throttle duplicate messages for configured seconds
-        if text == last_msg and (now - last_time) < TTS_THROTTLE_SECONDS:
-            continue
-        last_msg = text
-        last_time = now
-        try:
-            if not engine.isBusy():
-                engine.say(text)
-                engine.runAndWait()
-            else:
-                engine.say(text)
-                engine.runAndWait()
-        except Exception:
-            # Fallback to macOS 'say' command
-            try:
-                p = subprocess.Popen(['say', text])
-                p.wait()
-            except Exception:
-                pass
+    while True:
+        text = tts_queue.get()
+        if text: 
+            subprocess.run(['say', text]) 
+        tts_queue.task_done()
 
-# start worker thread
-tts_thread = threading.Thread(target=tts_worker, daemon=True)
-tts_thread.start()
+threading.Thread(target=tts_worker, daemon=True).start()
 
-def speak(text):
-    # respect global toggle
-    if not tts_enabled:
-        return
-    # enqueue text for the worker (non-blocking)
-    try:
-        tts_queue.put_nowait(text)
-    except Exception:
-        pass
-        
-def find_camera(max_idx=4):
-    for i in range(max_idx):
-        c = cv2.VideoCapture(i)
-        if c.isOpened():
-            return c, i
-        c.release()
-    return None, None
+def draw_skeleton(frame, kps):
+    connections = [(5,6), (5,7), (7,9), (6,8), (8,10), (5,11), (6,12), (11,12), (11,13), (13,15), (12,14), (14,16)]
+    for kp in kps:
+        if kp[2] > 0.5: 
+            cv2.circle(frame, (int(kp[0]), int(kp[1])), 4, (0,0,255), -1)
+    for s, e in connections:
+        if kps[s][2] > 0.5 and kps[e][2] > 0.5:
+            cv2.line(frame, (int(kps[s][0]), int(kps[s][1])), (int(kps[e][0]), int(kps[e][1])), (0,255,0), 2)
 
-cap, cam_idx = find_camera(4)
-if cap is None or not cap.isOpened():
-    cap = cv2.VideoCapture(0)
-    cam_idx = 0
-print(f"[INFO] Using camera index: {cam_idx}, opened: {cap.isOpened()}")
-
-# Make the window visible and resizable
-cv2.namedWindow("aEye Assistant", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("aEye Assistant", 800, 600)
-cv2.moveWindow("aEye Assistant", 100, 100)
+cap = cv2.VideoCapture(0)
+last_summary_time = 0
 
 try:
     while True:
-        if not cap.isOpened():
-            # show placeholder while camera unavailable
-            now = time.time()
-            if last_frame is not None and (now - last_frame_time) < STALE_FRAME_MAX_SECONDS:
-                disp = last_frame.copy()
-                cv2.putText(disp, "Camera unavailable — showing last frame", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
-            else:
-                disp = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(disp, "Camera not available. Press 'r' to retry or 'q' to quit.", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-            cv2.imshow("aEye Assistant", disp)
-            key = cv2.waitKey(100) & 0xFF
-            if key == ord('r'):
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-                cap, cam_idx = find_camera(4)
-                if debug_mode:
-                    print(f"Retrying camera scan, got index: {cam_idx}")
-                continue
-            elif key == ord('q'):
-                break
-            elif key == ord('d'):
-                debug_mode = not debug_mode
-                print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
-                continue
-            else:
-                continue
-
         success, frame = cap.read()
-        # handle pause mode
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('p'):
-            PAUSE_MODE = not PAUSE_MODE
-            if debug_mode:
-                print(f"Pause mode {'ON' if PAUSE_MODE else 'OFF'}")
-        if PAUSE_MODE:
-            # show last frame while paused
-            if last_frame is not None:
-                disp = last_frame.copy()
-                cv2.putText(disp, "PAUSED (press 'p' to resume)", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
-                cv2.imshow("aEye Assistant", disp)
-            else:
-                frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(frame, "PAUSED (no frame yet). Press 'p' to resume", (10,240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255),2)
-                cv2.imshow("aEye Assistant", frame)
-            if key == ord('q'):
-                break
-            elif key == ord('r'):
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-                cap, cam_idx = find_camera(4)
-                continue
-            elif key == ord('c'):
-                if last_frame is not None:
-                    fn = f"capture_{int(time.time())}.png"
-                    cv2.imwrite(fn, last_frame)
-                    print(f"Saved {fn}")
-                continue
-            else:
-                continue
-
-        if not success or frame is None:
-            # show last valid frame if recent, else placeholder and allow retry
-            now = time.time()
-            if last_frame is not None and (now - last_frame_time) < STALE_FRAME_MAX_SECONDS:
-                disp = last_frame.copy()
-                cv2.putText(disp, "No frame (showing last). Press 'r' to retry.", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
-                cv2.imshow("aEye Assistant", disp)
-            else:
-                frame = 255 * np.zeros((480, 640, 3), dtype=np.uint8)
-                cv2.putText(frame, "No frame from camera. Press 'r' to retry", (50,240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255),2)
-                cv2.imshow("aEye Assistant", frame)
-            key = cv2.waitKey(100) & 0xFF
-            if key == ord('r'):
-                try:
-                    cap.release()
-                except Exception:
-                    pass
-                cap, cam_idx = find_camera(4)
-                continue
-            elif key == ord('q'):
-                break
-            elif key == ord('d'):
-                debug_mode = not debug_mode
-                print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
-                continue
-            else:
-                continue
-
-        # compute frame diagnostics
-        stats = frame_stats(frame)
-        if stats is not None:
-            mean = stats['mean']
-            std = stats['std']
-            nonzero = stats['nonzero']
-            total = stats['total']
-            if debug_mode:
-                print(f"Frame stats - mean: {mean:.2f}, std: {std:.2f}, nonzero: {nonzero}/{total}")
-            # overlay stats
-            cv2.putText(frame, f"mean:{mean:.1f} std:{std:.1f}", (10,50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,0), 2)
-            # detect uniform frame (likely gray or all white)
-            if std < 1.0 or nonzero < total * 0.01:
-                bad_frame_count += 1
-                cv2.putText(frame, "UNIFORM FRAME - attempting recovery soon", (10,80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-                # Save a debug capture for inspection
-                if SAVE_ON_UNIFORM:
-                    try:
-                        ts = int(time.time())
-                        fn = os.path.join(DEBUG_CAPTURE_DIR, f"uniform_cam{cam_idx}_{ts}_mean{int(mean)}_std{int(std)}.png")
-                        cv2.imwrite(fn, frame)
-                        print(f"[DEBUG] Saved uniform frame to {fn} (mean={mean:.1f}, std={std:.1f})")
-                    except Exception as e:
-                        print(f"[ERROR] Failed to save uniform frame: {e}")
-            else:
-                bad_frame_count = 0
-
-        # auto-restart camera if too many bad frames
-        if bad_frame_count > BAD_FRAME_THRESHOLD:
-            print("Detected many uniform frames, reinitializing camera...")
-            try:
-                cap.release()
-            except Exception:
-                pass
-            cap, cam_idx = find_camera(4)
-            bad_frame_count = 0
-            continue
-
-        # record last good frame for fallback
-        last_frame = frame.copy()
-        last_frame_time = time.time()
-
-        #Run YOLO detection (protected)
-        try:
-            results = model(frame, conf=0.5, verbose=False)
-            inference_error = None
-        except Exception as e:
-            results = []
-            inference_error = str(e)
-            if debug_mode:
-                print(f"YOLO inference error: {e}")
-
-        # record last good frame for fallback
-        if frame is not None:
-            last_frame = frame.copy()
-            last_frame_time = time.time()
-
-        for r in results:
-            for box in r.boxes:
-                #Safe access to xy and class
-                try:
-                    x1, y1, x2, y2 = [float(v) for v in box.xyxy[0]]
-                except Exception:
-                    continue
-                w_px = x2 - x1
-                if w_px <=0:
-                    continue
-
-                cls_idx = int(box.cls[0]) if hasattr(box.cls, "__len__") else int(box.cls)
-                label = model.names[cls_idx]
-
-                dist = round(1500 / w_px, 1) #Calibration constant
-                msg = f"{label} at {dist} meters"
-
-                # Draw on screen
-                cv2.putText(frame, msg, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-                # Enqueue message for the TTS worker (avoids spawning many threads)
-                speak(msg)
-
-        # Show inference error overlay if present
-        if inference_error is not None:
-            cv2.putText(frame, "Inference error - see console" , (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
-
-        # Show TTS status and throttle on the frame
-        status_text = f"TTS: {'ON' if tts_enabled else 'OFF'} | Throttle: {TTS_THROTTLE_SECONDS}s"
-        try:
-            cv2.putText(frame, status_text, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        except Exception:
-            pass
-
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        if not success: 
             break
-        elif key == ord('m'):
-            # toggle TTS
-            tts_enabled = not tts_enabled
-            if tts_enabled:
-                # brief spoken confirmation
-                try:
-                    speak("Text to speech enabled")
-                except Exception:
-                    pass
-        elif key == ord('d'):
-            # toggle debug mode from the main loop (works while running)
-            debug_mode = not debug_mode
-            print(f"Debug mode {'ON' if debug_mode else 'OFF'}")
-        elif key == ord('['):
-            # decrease throttle window
-            TTS_THROTTLE_SECONDS = max(0, TTS_THROTTLE_SECONDS - 1)
-            try:
-                speak(f"Throttle {TTS_THROTTLE_SECONDS} seconds")
-            except Exception:
-                pass
-        elif key == ord(']'):
-            # increase throttle window
-            TTS_THROTTLE_SECONDS = TTS_THROTTLE_SECONDS + 1
-            try:
-                speak(f"Throttle {TTS_THROTTLE_SECONDS} seconds")
-            except Exception:
-                pass
+        fh, fw, _ = frame.shape
+        
+        # 1. RUN BOTH BRAINS
+        custom_results = custom_brain(frame, conf=CONF_THRESH, verbose=False)
+        pose_results = pose_brain(frame, conf=CONF_THRESH, verbose=False)
+        
+        # 2. FEATURE MATCHING (For "100% confidence" items)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        kp_f, des_f = orb.detectAndCompute(gray, None)
+        learned_alert = None
+        if des_f is not None:
+            for name, data in learned_items.items():
+                matches = bf.match(data["des"], des_f)
+                if len(matches) > 45: 
+                    learned_alert = name
+                    # Add visual indicator for learned item
+                    cv2.putText(frame, f"LEARNED: {name}", (50, 50), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 3)
+
+        table_box = None
+        table_items, people_found, furniture_found = [], [], []
+
+        # 3. PROCESS CUSTOM BRAIN (Furniture & Items)
+        for r in custom_results:
+            for box in r.boxes:
+                c = box.xyxy[0].cpu().numpy()
+                lbl = custom_brain.names[int(box.cls[0])]
+                dist = round(DIST_CALIB / max((c[2] - c[0]), 1), 1)
+                
+                if lbl in ['dining table', 'desk', 'bed', 'chair', 'couch']:
+                    if lbl in ['dining table', 'desk']: 
+                        table_box = c
+                    furniture_found.append({'label': lbl, 'dist': dist, 'x': (c[0]+c[2])/2})
+                    cv2.rectangle(frame, (int(c[0]), int(c[1])), (int(c[2]), int(c[3])), (255,0,0), 2)
+                    # Add label text for furniture
+                    label_text = f"{lbl} {int(dist)}m"
+                    cv2.putText(frame, label_text, (int(c[0]), int(c[1])-10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,0,0), 2)
+                elif lbl != 'person':
+                    # Check if on table
+                    if table_box is not None:
+                        xm, ym = (c[0]+c[2])/2, (c[1]+c[3])/2
+                        if (table_box[0] < xm < table_box[2]) and (table_box[1] < ym < table_box[3]):
+                            table_items.append(lbl)
+                    # Add label text for items
+                    cv2.rectangle(frame, (int(c[0]), int(c[1])), (int(c[2]), int(c[3])), (0,255,255), 2)
+                    label_text = f"{lbl}"
+                    cv2.putText(frame, label_text, (int(c[0]), int(c[1])-10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+
+        # 4. PROCESS POSE BRAIN (Person & Actions)
+        for r in pose_results:
+            for i, box in enumerate(r.boxes):
+                if pose_brain.names[int(box.cls[0])] == 'person':
+                    c = box.xyxy[0].cpu() .numpy()
+                    w, h = (c[2]-c[0]), (c[3]-c[1])
+                    actions = []
+                    
+                    if w > (h * 1.3): 
+                        actions.append("fallen")
+                    
+                    if r.keypoints is not None:
+                        kps = r.keypoints.data[i].cpu().numpy()
+                        draw_skeleton(frame, kps)
+                        if abs(kps[11][1] - kps[13][1]) < h * 0.15: 
+                            actions.append("sitting")
+                        if (kps[9][1] < kps[5][1]) or (kps[10][1] < kps[6][1]): 
+                            actions.append("waving")
+                    
+                    act_str = " and ".join(actions) if actions else "standing"
+                    people_found.append({'action': act_str, 'dist': round(DIST_CALIB/max(w,1),1), 'x': (c[0]+c[2])/2})
+                    cv2.rectangle(frame, (int(c[0]), int(c[1])), (int(c[2]), int(c[3])), (0,255,0), 2)
+                    # Add label text for person with actions
+                    label_text = f"Person {act_str} {int(round(DIST_CALIB/max(w,1),1))}m"
+                    cv2.putText(frame, label_text, (int(c[0]), int(c[1])-10), 
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+
+        # 5. SPEECH LOGIC
+        now = time.time()
+        if (now - last_summary_time) > SPEECH_DELAY:
+            parts = []
+            if learned_alert: 
+                parts.append(f"I found your {learned_alert}!")
+            if furniture_found and people_found:
+                f, p = furniture_found[0], people_found[0]
+                side = "to its left" if p['x'] < f['x'] else "to its right"
+                parts.append(f"a {f['label']} {int(f['dist'])} meters away, and a person {side} who is {p['action']}")
+            elif people_found:
+                p = people_found[0]
+                parts.append(f"a person who is {p['action']} {int(p['dist'])} meters away")
+            elif furniture_found:
+                parts.append(f"a {furniture_found[0]['label']}")
+            
+            if table_items: 
+                parts.append(f"a table with a {table_items[0]} on it")
+
+            if parts:
+                tts_queue.put("I see " + ", and ".join(parts) + ".")
+                last_summary_time = now
+
+        # 6. ADD SUMMARY OVERLAY
+        # Create a semi-transparent overlay for summary information
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, 10), (fw-10, 120), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        
+        # Display current detections summary
+        y_offset = 40
+        cv2.putText(frame, "DETECTIONS:", (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        y_offset += 25
+        
+        if learned_alert:
+            cv2.putText(frame, f"• Learned Item: {learned_alert}", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            y_offset += 20
+        
+        if furniture_found:
+            for furniture in furniture_found:
+                cv2.putText(frame, f"• {furniture['label']} ({int(furniture['dist'])}m)", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                y_offset += 20
+        
+        if people_found:
+            for person in people_found:
+                cv2.putText(frame, f"• Person {person['action']} ({int(person['dist'])}m)", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                y_offset += 20
+        
+        if table_items:
+            for item in table_items:
+                cv2.putText(frame, f"• Item on table: {item}", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                y_offset += 20
+
+        cv2.imshow("aEye Universal", frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'): 
+            break
 finally:
-    # Clean shutdown
-    tts_stop_event.set()
-    try:
-        tts_queue.put(None)  # signal worker to exit
-    except Exception:
-        pass
-    try:
-        engine.stop()
-    except Exception:
-        pass
-    try:
-        tts_thread.join(timeout=2)
-    except Exception:
-        pass
     cap.release()
     cv2.destroyAllWindows()
-                
