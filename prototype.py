@@ -12,7 +12,7 @@ CUSTOM_MODEL_NAME = 'yolo26n.pt'
 # Standard lightweight pose model for skeleton/actions
 POSE_MODEL_NAME = 'yolo26n-pose.pt' 
 
-CONF_THRESH = 0.25 
+CONF_THRESH = 0.60
 DIST_CALIB = 1500   
 SPEECH_DELAY = 8 
 
@@ -81,7 +81,7 @@ try:
                               cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,0), 3)
 
         table_box = None
-        table_items, people_found, furniture_found = [], [], []
+        table_items, people_found, furniture_found, other_items = [], [], [], []
 
         # 3. PROCESS CUSTOM BRAIN (Furniture & Items)
         for r in custom_results:
@@ -105,6 +105,12 @@ try:
                         xm, ym = (c[0]+c[2])/2, (c[1]+c[3])/2
                         if (table_box[0] < xm < table_box[2]) and (table_box[1] < ym < table_box[3]):
                             table_items.append(lbl)
+                        else:
+                            # Add to other items if not on table
+                            other_items.append({'label': lbl, 'dist': dist, 'x': (c[0]+c[2])/2})
+                    else:
+                        # Add to other items if no table detected
+                        other_items.append({'label': lbl, 'dist': dist, 'x': (c[0]+c[2])/2})
                     # Add label text for items
                     cv2.rectangle(frame, (int(c[0]), int(c[1])), (int(c[2]), int(c[3])), (0,255,255), 2)
                     label_text = f"{lbl}"
@@ -144,18 +150,39 @@ try:
             parts = []
             if learned_alert: 
                 parts.append(f"I found your {learned_alert}!")
-            if furniture_found and people_found:
-                f, p = furniture_found[0], people_found[0]
-                side = "to its left" if p['x'] < f['x'] else "to its right"
-                parts.append(f"a {f['label']} {int(f['dist'])} meters away, and a person {side} who is {p['action']}")
-            elif people_found:
+            
+            # Add furniture
+            if furniture_found:
+                f = furniture_found[0]
+                parts.append(f"a {f['label']} {int(f['dist'])} meters away")
+            
+            # Add people
+            if people_found:
                 p = people_found[0]
                 parts.append(f"a person who is {p['action']} {int(p['dist'])} meters away")
-            elif furniture_found:
-                parts.append(f"a {furniture_found[0]['label']}")
             
+            # Add items on table
             if table_items: 
                 parts.append(f"a table with a {table_items[0]} on it")
+            
+            # Add other detected items
+            if other_items:
+                # Group items by distance to avoid repetition
+                items_by_distance = {}
+                for item in other_items:
+                    dist = item['dist']
+                    if dist not in items_by_distance:
+                        items_by_distance[dist] = []
+                    items_by_distance[dist].append(item['label'])
+                
+                # Add items to speech
+                for dist, items in items_by_distance.items():
+                    if len(items) == 1:
+                        parts.append(f"a {items[0]} {int(dist)} meters away")
+                    else:
+                        # Multiple items at same distance
+                        items_str = ", ".join(items[:-1]) + f" and {items[-1]}"
+                        parts.append(f"{items_str} {int(dist)} meters away")
 
             if parts:
                 tts_queue.put("I see " + ", and ".join(parts) + ".")
@@ -189,6 +216,11 @@ try:
         if table_items:
             for item in table_items:
                 cv2.putText(frame, f"• Item on table: {item}", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                y_offset += 20
+        
+        if other_items:
+            for item in other_items:
+                cv2.putText(frame, f"• {item['label']} ({int(item['dist'])}m)", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                 y_offset += 20
 
         cv2.imshow("aEye Universal", frame)
