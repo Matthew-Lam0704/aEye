@@ -32,3 +32,7 @@ The goal is to make environmental awareness accessible anywhere, without requiri
 git clone https://github.com/your-username/aEye.git
 cd aEye
 pip install -r requirements.txt
+
+```bash
+python3 app.py (On macOS)
+python app.py (On windows)
