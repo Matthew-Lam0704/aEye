@@ -23,8 +23,8 @@ def make_json_safe(obj):
 app = Flask(__name__)
 
 # --- CONFIG ---
-CUSTOM_MODEL_NAME = "models/yolov8s.pt"
-POSE_MODEL_NAME = "models/yolov8n-pose.pt"
+CUSTOM_MODEL_NAME = "models/yolo11n.pt"
+POSE_MODEL_NAME = "models/yolo11n-pose.pt"
 
 CONF_THRESH = 0.30
 DIST_CALIB = 1500
