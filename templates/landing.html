@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>aEye Universal</title>
+
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="aEye">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
+  <style>
+    body{ font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; margin:0; background:#0f0f10; color:#eee; }
+    .wrap{ min-height:100vh; display:flex; flex-direction:column; padding:18px; gap:16px; }
+
+    /* Skip link: visible when focused (screen reader + keyboard users) */
+    .skip {
+      position:absolute; left:-999px; top:auto; width:1px; height:1px; overflow:hidden;
+    }
+    .skip:focus {
+      position:static; width:auto; height:auto;
+      background:#2d7cff; color:white; padding:12px 14px; border-radius:12px;
+      display:inline-block;
+    }
+
+    .hero{ background:#171717; border-radius:18px; padding:16px; border:1px solid #222; }
+    h1{ font-size:28px; margin:0 0 10px 0; }
+    p{ margin:0; color:#bbb; line-height:1.5; font-size:16px; }
+
+    .card{ background:#151515; border-radius:16px; padding:14px; border:1px solid #222; }
+    .card h2{ margin:0 0 6px 0; font-size:16px; }
+    .card p{ font-size:14px; color:#aaa; }
+
+    .cta{ margin-top:auto; background:#171717; border-radius:16px; padding:14px; border:1px solid #222; display:flex; flex-direction:column; gap:10px; }
+    .button {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;   /* IMPORTANT */
+      text-decoration: none;
+      text-align: center;
+      font-size: 20px;
+      padding: 16px;
+      border-radius: 14px;
+      background: #2d7cff;
+      color: white;
+      font-weight: 600;
+      border: none;
+      appearance: none;         /* removes browser default styling */
+    }
+
+    a.button:active, button:active{ background:#1f5fd1; }
+
+    /* Make focus clearly visible */
+    a:focus, button:focus, [tabindex="0"]:focus {
+      outline: 3px solid #ffffff;
+      outline-offset: 3px;
+    }
+
+    .srhint{ font-size:12px; color:#888; line-height:1.4; }
+  </style>
+</head>
+
+<body>
+  <!-- Skip link helps screen reader + keyboard users jump straight to the main action -->
+  <a class="skip" href="#start">Skip to Start Detection</a>
+
+  <main class="wrap" role="main" aria-labelledby="pageTitle">
+    <header class="hero">
+      <h1 id="pageTitle" tabindex="0">
+        aEye
+      </h1>
+
+      <!-- tabindex="0" makes this paragraph focusable, so it can be read when users swipe/tab -->
+      <p id="intro" tabindex="0">
+        aEye Universal is an assistive vision tool that uses your phone camera to describe what’s in front of you.
+        It can detect people, estimate distance, recognize simple poses, and identify objects and items on tables.
+      </p>
+
+      <p class="srhint" tabindex="0">
+        Tip: If you are using VoiceOver, swipe right to move through the page. To begin, activate the Start Detection button.
+      </p>
+    </header>
+
+    <section class="card" aria-labelledby="howTitle">
+      <h2 id="howTitle" tabindex="0">How to use</h2>
+      <p tabindex="0">
+        1. Activate Start Detection.
+        2. Allow camera access.
+        3. Activate Enable Speech to hear scene summaries.
+      </p>
+    </section>
+
+    <section class="card" aria-labelledby="privacyTitle">
+      <h2 id="privacyTitle" tabindex="0">Privacy note</h2>
+      <p tabindex="0">
+        This is a demo. Detection may run on a server during testing. Offline on-device mode is planned for the future.
+      </p>
+    </section>
+
+    <section class="cta" aria-labelledby="startTitle">
+      <h2 id="startTitle" class="srhint">Start</h2>
+
+      <!-- This is the main action -->
+      <a id="start" class="button" href="/detect" aria-label="Start Detection">
+        Start Detection
+      </a>
+
+      <!-- Optional: a button to read the intro aloud without VoiceOver -->
+      <button id="readIntro" aria-label="Read introduction aloud">
+        Read Instructions Aloud
+      </button>
+
+      <div class="srhint" tabindex="0">
+        If speech does not play, check silent mode and volume.
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Optional convenience: reads the intro aloud for users NOT using VoiceOver.
+    // VoiceOver users typically rely on the screen reader instead.
+    const btn = document.getElementById("readIntro");
+    btn.addEventListener("click", () => {
+      const text = document.getElementById("intro").textContent.trim();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.0;
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+    });
+  </script>
+</body>
+</html>

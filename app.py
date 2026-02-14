@@ -329,8 +329,12 @@ def process_frame(frame):
     return frame
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+def landing():
+    return render_template("landing.html")
+
+@app.route("/detect")
+def detect():
+    return render_template("detect.html")
 
 @app.route("/detections")
 def detections():
