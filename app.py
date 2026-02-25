@@ -7,6 +7,8 @@ from ultralytics import YOLO
 from collections import deque, Counter
 import numpy as np
 import base64
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = "/opt/homebrew/bin/tesseract"
 
 ACTION_HISTORY = deque(maxlen=10)  # last ~10 frames of actions
 
@@ -376,6 +378,29 @@ def infer():
 
     safe["annotated_jpg"] = annotated_b64
     return jsonify(safe)
+
+@app.route("/ocr", methods=["POST"])
+def ocr():
+    print("✅ /ocr called")
+    file = request.files.get("frame")
+    if file is None:
+        return jsonify({"error": "no frame provided"}), 400
+
+    img_bytes = file.read()
+    npbuf = np.frombuffer(img_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(npbuf, cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "bad image"}), 400
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    gray = cv2.bilateralFilter(gray, 9, 75, 75)
+
+    text = pytesseract.image_to_string(gray)
+    print("OCR TEXT:", text)
+    
+    # clean it
+    text = " ".join(text.split())
+    return jsonify({"text": text})
 
 if __name__ == "__main__":
     # Use 0.0.0.0 if you want to open from your phone on the same Wi-Fi

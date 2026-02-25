@@ -108,6 +108,43 @@ async function sendFrame() {
   }
 }
 
+document.getElementById("readText").onclick = async () => {
+  if (!video.srcObject) return alert("Start camera first");
+
+  const w = video.videoWidth, h = video.videoHeight;
+  if (!w || !h) return;
+
+  // higher res helps OCR
+  const targetW = 1280;
+  const targetH = Math.round((h / w) * targetW);
+
+  canvas.width = targetW;
+  canvas.height = targetH;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0, targetW, targetH);
+
+  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.9));
+  const form = new FormData();
+  form.append("frame", blob, "ocr.jpg");
+
+  const r = await fetch("/ocr", { method: "POST", body: form });
+  const data = await r.json();
+
+  console.log("OCR response:", data);
+  document.getElementById("json").textContent = JSON.stringify(data, null, 2); 
+
+  if (data.text) {
+    latestText = data.text;
+    // speak immediately (user gesture)
+    const u = new SpeechSynthesisUtterance(data.text);
+    u.rate = 1.0;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } else {
+    alert("No text found.");
+  }
+};
+
 speakNowBtn.onclick = () => {
   if (!speechEnabled) return;
   if (!latestText) return;
