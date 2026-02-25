@@ -3,6 +3,8 @@ let lastSpoken = "";
 let latestText = "";
 let lastSpokenAt = 0;
 let selectedVoice = null;
+let pauseInfer = false;
+let ocrBusy = false;
 
 const video = document.getElementById("cam");
 const canvas = document.getElementById("grab");
@@ -69,6 +71,9 @@ startBtn.onclick = async () => {
 };
 
 async function sendFrame() {
+  async function sendFrame() {
+  if (pauseInfer) return;
+  // ... existing code
   if (!video.srcObject) return;
 
   const w = video.videoWidth;
@@ -106,42 +111,64 @@ async function sendFrame() {
     latestText = data.speech;
     speak(data.speech);
   }
+  }
 }
 
 document.getElementById("readText").onclick = async () => {
+  if (ocrBusy) return;
   if (!video.srcObject) return alert("Start camera first");
 
-  const w = video.videoWidth, h = video.videoHeight;
-  if (!w || !h) return;
+  ocrBusy = true;
+  pauseInfer = true; // ✅ pause normal detection while OCR runs
 
-  // higher res helps OCR
-  const targetW = 1280;
-  const targetH = Math.round((h / w) * targetW);
+  try {
+    // (optional) show user feedback
+    const btn = document.getElementById("readText");
+    const oldText = btn.textContent;
+    btn.textContent = "Reading…";
+    btn.disabled = true;
 
-  canvas.width = targetW;
-  canvas.height = targetH;
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0, targetW, targetH);
+    // --- your OCR capture + fetch code here ---
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (!w || !h) return;
 
-  const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.9));
-  const form = new FormData();
-  form.append("frame", blob, "ocr.jpg");
+    // IMPORTANT: keep OCR capture moderate so it’s not too slow
+    const targetW = 960; // ✅ try 960 first (1280 can be heavy on iPhone)
+    const targetH = Math.round((h / w) * targetW);
 
-  const r = await fetch("/ocr", { method: "POST", body: form });
-  const data = await r.json();
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(video, 0, 0, targetW, targetH);
 
-  console.log("OCR response:", data);
-  document.getElementById("json").textContent = JSON.stringify(data, null, 2); 
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+    if (!blob) return;
 
-  if (data.text) {
-    latestText = data.text;
+    const form = new FormData();
+    form.append("frame", blob, "ocr.jpg");
+
+    const r = await fetch("/ocr", { method: "POST", body: form });
+    const data = await r.json();
+
+    const text = (data.text || "").trim();
+    const say = text || "I could not find readable text. Try moving closer.";
+
     // speak immediately (user gesture)
-    const u = new SpeechSynthesisUtterance(data.text);
+    const u = new SpeechSynthesisUtterance(say);
     u.rate = 1.0;
     speechSynthesis.cancel();
     speechSynthesis.speak(u);
-  } else {
-    alert("No text found.");
+
+    // restore button
+    btn.textContent = oldText;
+    btn.disabled = false;
+
+  } catch (e) {
+    alert("Read Text error: " + e.message);
+  } finally {
+    ocrBusy = false;
+    pauseInfer = false; // ✅ resume normal detection
   }
 };
 
@@ -158,4 +185,4 @@ speakNowBtn.onclick = () => {
 };
 
 // ~2 fps
-setInterval(sendFrame, 500);
+let inferTimer = setInterval(sendFrame, 500);
