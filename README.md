@@ -25,7 +25,7 @@ The goal is to make environmental awareness accessible anywhere, without requiri
 ### Prerequisites
 - Python 3.9+
 - pip
-- Webcam (or device camera)
+- Phone 
 
 ### Installation
 ```bash
@@ -42,6 +42,10 @@ python app.py
 ```
 
 ### Open your browser at
-```arduino
-http://localhost:5050
+```bash
+ngrok http 5050
 ```
+
+### Access the website through
+- Enter the website name provided in bash from ngrok
+- Press "Visit site" and then continue with the demo
