@@ -109,7 +109,6 @@ async function sendFrame() {
 
   if (data.speech) {
     latestText = data.speech;
-    speak(data.speech);
   }
   }
 }
@@ -183,6 +182,29 @@ speakNowBtn.onclick = () => {
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
 };
+
+function speakLatestSummary() {
+  const text = latestText || "I do not have a scene summary yet.";
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+let lastTap = 0;
+
+const tapSurface = document.getElementById("tapSurface");
+
+tapSurface.addEventListener("pointerup", () => {
+  const now = Date.now();
+
+  if (now - lastTap < 350) {
+    speakLatestSummary();
+    lastTap = 0;
+  } else {
+    lastTap = now;
+  }
+});
 
 // ~2 fps
 let inferTimer = setInterval(sendFrame, 500);

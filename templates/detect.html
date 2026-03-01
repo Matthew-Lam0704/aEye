@@ -23,6 +23,14 @@
     #lastSpeech { font-size:18px; margin-top:12px; }
     pre { white-space:pre-wrap; font-size:12px; max-height:35vh; overflow-y:auto; background:#111; padding:10px; border-radius:12px; }
     a.back { color:#bbb; text-decoration:none; display:inline-block; margin-bottom:10px; }
+    #tapSurface {
+      pointer-events: auto;
+    }
+    .card button,
+    a.back {
+      position: relative;
+      z-index: 10;
+    }
   </style>
 </head>
 
@@ -45,14 +53,28 @@
     <div class="card">
       <h2 style="margin-top:0;">Controls</h2>
       <button id="enable">Enable Speech</button>
-      <button id="speakNow">Speak Now</button>
+      <!-- <button id="speakNow">Speak Now</button> -->
+      
       <button id="readText">Read Text</button>
 
       <div class="muted" id="lastSpeech" aria-live="polite"></div>
 
-      <h3 class="muted" style="margin-top:12px;">Raw detections</h3>
-      <pre id="json"></pre>
+      <!-- <h3 class="muted" style="margin-top:12px;">Raw detections</h3>
+      <pre id="json"></pre> -->
     </div>
+  </div>
+
+  <!-- Full screen invisible tap surface -->
+  <div id="tapSurface"
+      role="button"
+      tabindex="0"
+      aria-label="Double tap anywhere to hear what is in front of you."
+      style="
+        position: fixed;
+        inset: 0;
+        z-index: 5;
+        background: transparent;
+      ">
   </div>
 
   <script src="/static/app.js"></script>
