@@ -1,85 +1,72 @@
-let speechEnabled = false;
-let lastSpoken = "";
 let latestText = "";
-let lastSpokenAt = 0;
-let selectedVoice = null;
 let pauseInfer = false;
 let ocrBusy = false;
 
 const video = document.getElementById("cam");
 const canvas = document.getElementById("grab");
 const startBtn = document.getElementById("startCam");
-const enableBtn = document.getElementById("enable");
-const speakNowBtn = document.getElementById("speakNow");
+const readTextBtn = document.getElementById("readText");
+const tapSurface = document.getElementById("tapSurface");
+const img = document.getElementById("annotated");
 
-function pickVoice() {
-  const voices = speechSynthesis.getVoices();
-  selectedVoice = voices.find(v => /en/i.test(v.lang)) || voices[0] || null;
-}
-speechSynthesis.onvoiceschanged = pickVoice;
-pickVoice();
-
-enableBtn.onclick = () => {
-  speechEnabled = true;
-  enableBtn.textContent = "Speech enabled ✅";
-  enableBtn.style.background = "#28a745";
-
-  // Unlock speech on iOS (must happen on a user tap)
-  const u = new SpeechSynthesisUtterance("Speech enabled");
-  if (selectedVoice) u.voice = selectedVoice;
+function speakNow(text) {
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.0;
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
-};
-
-function speak(text) {
-  if (!speechEnabled) return;
-  if (!text) return;
-
-  // throttle so iOS doesn't block / spam
-  const now = Date.now();
-  if (now - lastSpokenAt < 2500) return;
-  if (text === lastSpoken) return;
-
-  lastSpoken = text;
-  lastSpokenAt = now;
-
-  const u = new SpeechSynthesisUtterance(text);
-  if (selectedVoice) u.voice = selectedVoice;
-  u.rate = 1.0;
-
-  speechSynthesis.speak(u);
-
-  const el = document.getElementById("lastSpeech");
-  if (el) el.textContent = text;
 }
 
+function speakLatestSummary() {
+  speakNow(latestText || "No summary yet. Point the camera at something.");
+}
+
+// Double tap anywhere to speak
+let lastTap = 0;
+tapSurface.addEventListener("pointerup", () => {
+  const now = Date.now();
+  if (now - lastTap < 350) {
+    speakLatestSummary();
+    lastTap = 0;
+  } else {
+    lastTap = now;
+  }
+});
+
+// Start camera
 startBtn.onclick = async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment" },
       audio: false
     });
+
     video.srcObject = stream;
     await video.play();
+
     startBtn.textContent = "Camera running ✅";
     startBtn.style.background = "#28a745";
+
+    // iPhone will allow speech here because user tapped Start Camera
+    speakNow(
+      "Camera running. Double tap anywhere to hear what is in front of you. Press Read Text to read printed text."
+    );
   } catch (e) {
     alert("Camera error: " + e.name + " — " + e.message);
     console.log(e);
   }
 };
 
+// Send frames for detection (no auto speaking)
 async function sendFrame() {
-  async function sendFrame() {
   if (pauseInfer) return;
-  // ... existing code
   if (!video.srcObject) return;
 
   const w = video.videoWidth;
   const h = video.videoHeight;
   if (!w || !h) return;
 
+  // small for speed
   const targetW = 640;
   const targetH = Math.round((h / w) * targetW);
 
@@ -98,46 +85,38 @@ async function sendFrame() {
   const r = await fetch("/infer", { method: "POST", body: form });
   const data = await r.json();
 
-  const img = document.getElementById("annotated");
   if (img && data.annotated_jpg) {
-    img.style.display = "block";
     img.src = "data:image/jpeg;base64," + data.annotated_jpg;
   }
 
-  const jsonEl = document.getElementById("json");
-  if (jsonEl) jsonEl.textContent = JSON.stringify(data, null, 2);
-
-  if (data.speech) {
-    latestText = data.speech;
-  }
-  }
+  // store latest summary for on-demand speech
+  if (data.speech) latestText = data.speech;
 }
 
-document.getElementById("readText").onclick = async () => {
+// Read Text (OCR) - pauses detection while running
+readTextBtn.onclick = async () => {
   if (ocrBusy) return;
   if (!video.srcObject) return alert("Start camera first");
 
   ocrBusy = true;
-  pauseInfer = true; // ✅ pause normal detection while OCR runs
+  pauseInfer = true;
+
+  const oldText = readTextBtn.textContent;
+  readTextBtn.textContent = "Reading…";
+  readTextBtn.disabled = true;
 
   try {
-    // (optional) show user feedback
-    const btn = document.getElementById("readText");
-    const oldText = btn.textContent;
-    btn.textContent = "Reading…";
-    btn.disabled = true;
-
-    // --- your OCR capture + fetch code here ---
     const w = video.videoWidth;
     const h = video.videoHeight;
     if (!w || !h) return;
 
-    // IMPORTANT: keep OCR capture moderate so it’s not too slow
-    const targetW = 960; // ✅ try 960 first (1280 can be heavy on iPhone)
+    // moderate size for OCR
+    const targetW = 960;
     const targetH = Math.round((h / w) * targetW);
 
     canvas.width = targetW;
     canvas.height = targetH;
+
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, targetW, targetH);
 
@@ -151,67 +130,16 @@ document.getElementById("readText").onclick = async () => {
     const data = await r.json();
 
     const text = (data.text || "").trim();
-    const say = text || "I could not find readable text. Try moving closer.";
-
-    // speak immediately (user gesture)
-    const u = new SpeechSynthesisUtterance(say);
-    u.rate = 1.0;
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
-
-    // restore button
-    btn.textContent = oldText;
-    btn.disabled = false;
-
+    speakNow(text || "I could not find readable text. Try moving closer.");
   } catch (e) {
     alert("Read Text error: " + e.message);
   } finally {
+    readTextBtn.textContent = oldText;
+    readTextBtn.disabled = false;
     ocrBusy = false;
-    pauseInfer = false; // ✅ resume normal detection
+    pauseInfer = false;
   }
 };
 
-speakNowBtn.onclick = () => {
-  if (!speechEnabled) return;
-  if (!latestText) return;
-
-  // This is a user gesture, so it's safe to cancel + speak immediately
-  const u = new SpeechSynthesisUtterance(latestText);
-  if (selectedVoice) u.voice = selectedVoice;
-  u.rate = 1.0;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-};
-
-function speakLatestSummary() {
-  const text = latestText || "I do not have a scene summary yet.";
-  const u = new SpeechSynthesisUtterance(text);
-  u.rate = 1.0;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-}
-
-let lastTap = 0;
-
-const tapSurface = document.getElementById("tapSurface");
-
-tapSurface.addEventListener("pointerup", () => {
-  const now = Date.now();
-
-  if (now - lastTap < 350) {
-    speakLatestSummary();
-    lastTap = 0;
-  } else {
-    lastTap = now;
-  }
-});
-
-window.addEventListener("load", () => {
-  const u = new SpeechSynthesisUtterance(
-    "Camera mode. Double tap anywhere to hear what is in front of you."
-  );
-  speechSynthesis.speak(u);
-});
-
-// ~2 fps
-let inferTimer = setInterval(sendFrame, 500);
+// ~2 FPS inference
+setInterval(sendFrame, 500);
