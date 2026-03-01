@@ -206,5 +206,12 @@ tapSurface.addEventListener("pointerup", () => {
   }
 });
 
+window.addEventListener("load", () => {
+  const u = new SpeechSynthesisUtterance(
+    "Camera mode. Double tap anywhere to hear what is in front of you."
+  );
+  speechSynthesis.speak(u);
+});
+
 // ~2 fps
 let inferTimer = setInterval(sendFrame, 500);
