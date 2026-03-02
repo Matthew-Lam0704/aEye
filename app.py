@@ -231,7 +231,14 @@ def distance_tier(dist_meters):
     return "far"
 
 
-def person_distance_tier(dist_meters, person_width_px, person_height_px, frame_width_px, frame_height_px):
+def person_distance_tier(
+    dist_meters,
+    person_width_px,
+    person_height_px,
+    frame_width_px,
+    frame_height_px,
+    box_xyxy=None
+):
     width_ratio = person_width_px / max(frame_width_px, 1)
     height_ratio = person_height_px / max(frame_height_px, 1)
     close_size_match = (
@@ -251,9 +258,28 @@ def person_distance_tier(dist_meters, person_width_px, person_height_px, frame_w
     ):
         return "very_close"
 
+    # If a person box is clipped by frame edges, width-only distance can be unstable.
+    # Promote clearly "camera-filling" clipped boxes to close/very_close.
+    if box_xyxy is not None:
+        x1, y1, x2, y2 = box_xyxy
+        edge_touch = (
+            x1 <= 2
+            or y1 <= 2
+            or x2 >= (frame_width_px - 2)
+            or y2 >= (frame_height_px - 2)
+        )
+        if edge_touch and (width_ratio >= 0.62 or height_ratio >= 0.92):
+            return "very_close"
+        if edge_touch and (width_ratio >= 0.24 or height_ratio >= 0.50):
+            return "close"
+
     # Close should need stronger evidence than a single noisy cue.
     # This avoids false "close" at ~3m when only one ratio spikes.
-    if dist_meters <= 1.9 or (dist_meters <= 2.6 and close_size_match):
+    if (
+        dist_meters <= 1.9
+        or (dist_meters <= 2.6 and close_size_match)
+        or (height_ratio >= 0.74 and width_ratio >= 0.24)
+    ):
         return "close"
 
     if dist_meters <= 4.8 or near_size_match:
@@ -561,7 +587,7 @@ def process_frame(frame):
             dist = round(DIST_CALIB / max(w, 1), 1)
             xm = float((c[0] + c[2]) / 2)
             direction = direction_from_x(xm, fw)
-            tier = person_distance_tier(dist, w, h, fw, fh)
+            tier = person_distance_tier(dist, w, h, fw, fh, c)
             hazard_level = hazard_level_for("person", tier)
             width_ratio = w / max(fw, 1)
             height_ratio = h / max(fh, 1)
@@ -587,7 +613,8 @@ def process_frame(frame):
                 "hazard_level": hazard_level
             }
             people_found.append(person_obj)
-            if person_stable:
+            person_is_hazard = person_stable and tier in {"very_close", "close"}
+            if person_is_hazard:
                 hazards.append({
                     "label": "person",
                     "action": act_str,
