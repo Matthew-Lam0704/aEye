@@ -28,6 +28,10 @@ const readTextBtn = document.getElementById("readText");
 const tapSurface = document.getElementById("tapSurface");
 const cameraStatus = document.getElementById("cameraStatus");
 const annotatedImg = document.getElementById("annotated");
+let activeSpeechSequence = null;
+const LONG_PRESS_MS = 650;
+let longPressTimer = null;
+let longPressTriggered = false;
 
 function setCameraStatus(text) {
   if (cameraStatus) {
@@ -108,6 +112,20 @@ function speak(text, opts = {}) {
 
   const el = document.getElementById("lastSpeech");
   if (el) el.textContent = text;
+}
+
+function stopSpeaking({ updateUi = true } = {}) {
+  speechSynthesis.cancel();
+  if (activeSpeechSequence) {
+    activeSpeechSequence.cancelled = true;
+    activeSpeechSequence.resolveNow();
+    activeSpeechSequence = null;
+  }
+
+  if (updateUi && readTextBtn) {
+    readTextBtn.textContent = "Read Text";
+    readTextBtn.disabled = false;
+  }
 }
 
 function speakUrgent(text) {
@@ -286,10 +304,34 @@ function speakInSequence(chunks, mode = "default") {
       return;
     }
 
-    let idx = 0;
-    const speakNext = () => {
-      if (idx >= chunks.length) {
+    // Ensure only one active sequence and make it stoppable.
+    stopSpeaking({ updateUi: false });
+    const sequence = {
+      cancelled: false,
+      done: false,
+      resolveNow: () => {
+        if (sequence.done) return;
+        sequence.done = true;
         resolve();
+      }
+    };
+    activeSpeechSequence = sequence;
+
+    let idx = 0;
+    const finish = () => {
+      if (activeSpeechSequence === sequence) {
+        activeSpeechSequence = null;
+      }
+      sequence.resolveNow();
+    };
+
+    const speakNext = () => {
+      if (sequence.cancelled) {
+        finish();
+        return;
+      }
+      if (idx >= chunks.length) {
+        finish();
         return;
       }
       const piece = chunks[idx++];
@@ -298,8 +340,6 @@ function speakInSequence(chunks, mode = "default") {
       u.onerror = speakNext;
       speechSynthesis.speak(u);
     };
-
-    speechSynthesis.cancel();
     speakNext();
 
     const el = document.getElementById("lastSpeech");
@@ -355,7 +395,30 @@ function speakLatestSummary() {
 
 let tapCount = 0;
 let tapTimer = null;
+tapSurface.addEventListener("pointerdown", () => {
+  if (longPressTimer) clearTimeout(longPressTimer);
+  longPressTriggered = false;
+  longPressTimer = setTimeout(() => {
+    longPressTriggered = true;
+    // Hold gesture is an immediate "stop talking" command.
+    stopSpeaking();
+    const el = document.getElementById("lastSpeech");
+    if (el) el.textContent = "Speech stopped.";
+    tapCount = 0;
+    if (tapTimer) {
+      clearTimeout(tapTimer);
+      tapTimer = null;
+    }
+  }, LONG_PRESS_MS);
+});
+
 tapSurface.addEventListener("pointerup", async () => {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  if (longPressTriggered) return;
+
   if (startupPromptPending) {
     // iOS/Safari may block TTS on page load; first user gesture unlocks it.
     announceStartup();
