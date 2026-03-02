@@ -234,6 +234,14 @@ def distance_tier(dist_meters):
 def person_distance_tier(dist_meters, person_width_px, person_height_px, frame_width_px, frame_height_px):
     width_ratio = person_width_px / max(frame_width_px, 1)
     height_ratio = person_height_px / max(frame_height_px, 1)
+    close_size_match = (
+        width_ratio >= PERSON_TIER_WIDTH_RATIO["close"]
+        and height_ratio >= PERSON_TIER_HEIGHT_RATIO["close"]
+    )
+    near_size_match = (
+        width_ratio >= PERSON_TIER_WIDTH_RATIO["near"]
+        or height_ratio >= PERSON_TIER_HEIGHT_RATIO["near"]
+    )
 
     # Require strong width+height coverage for very_close to avoid false alarms.
     if (
@@ -243,19 +251,12 @@ def person_distance_tier(dist_meters, person_width_px, person_height_px, frame_w
     ):
         return "very_close"
 
-    # 1-2m standing person should usually land here.
-    if (
-        dist_meters <= 2.4
-        or width_ratio >= PERSON_TIER_WIDTH_RATIO["close"]
-        or height_ratio >= PERSON_TIER_HEIGHT_RATIO["close"]
-    ):
+    # Close should need stronger evidence than a single noisy cue.
+    # This avoids false "close" at ~3m when only one ratio spikes.
+    if dist_meters <= 1.9 or (dist_meters <= 2.6 and close_size_match):
         return "close"
 
-    if (
-        dist_meters <= 4.8
-        or width_ratio >= PERSON_TIER_WIDTH_RATIO["near"]
-        or height_ratio >= PERSON_TIER_HEIGHT_RATIO["near"]
-    ):
+    if dist_meters <= 4.8 or near_size_match:
         return "near"
     return "far"
 
