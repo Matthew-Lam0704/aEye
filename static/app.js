@@ -5,7 +5,7 @@ let selectedVoice = null;
 let pauseInfer = false;
 let ocrBusy = false;
 let startupPromptPending = true;
-const STARTUP_MESSAGE = "The app has started. Double tap to read what is in front of you. Triple tap to read text in front of you.";
+const STARTUP_MESSAGE = "The app has started. Single tap to stop reading. Double tap to read what is in front of you. Triple tap to read text in front of you.";
 let lastUrgentSpoken = "";
 let lastUrgentAt = 0;
 const URGENT_CLIENT_COOLDOWN_MS = 1800;
@@ -29,9 +29,6 @@ const tapSurface = document.getElementById("tapSurface");
 const cameraStatus = document.getElementById("cameraStatus");
 const annotatedImg = document.getElementById("annotated");
 let activeSpeechSequence = null;
-const LONG_PRESS_MS = 650;
-let longPressTimer = null;
-let longPressTriggered = false;
 
 function setCameraStatus(text) {
   if (cameraStatus) {
@@ -395,30 +392,7 @@ function speakLatestSummary() {
 
 let tapCount = 0;
 let tapTimer = null;
-tapSurface.addEventListener("pointerdown", () => {
-  if (longPressTimer) clearTimeout(longPressTimer);
-  longPressTriggered = false;
-  longPressTimer = setTimeout(() => {
-    longPressTriggered = true;
-    // Hold gesture is an immediate "stop talking" command.
-    stopSpeaking();
-    const el = document.getElementById("lastSpeech");
-    if (el) el.textContent = "Speech stopped.";
-    tapCount = 0;
-    if (tapTimer) {
-      clearTimeout(tapTimer);
-      tapTimer = null;
-    }
-  }, LONG_PRESS_MS);
-});
-
 tapSurface.addEventListener("pointerup", async () => {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-  }
-  if (longPressTriggered) return;
-
   if (startupPromptPending) {
     // iOS/Safari may block TTS on page load; first user gesture unlocks it.
     announceStartup();
@@ -445,6 +419,14 @@ tapSurface.addEventListener("pointerup", async () => {
     }
     if (count === 2) {
       speakLatestSummary();
+      return;
+    }
+    if (count === 1) {
+      if (speechSynthesis.speaking || ocrBusy || activeSpeechSequence) {
+        stopSpeaking();
+        const el = document.getElementById("lastSpeech");
+        if (el) el.textContent = "Speech stopped.";
+      }
     }
   }, 420);
 });
