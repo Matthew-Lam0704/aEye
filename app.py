@@ -258,31 +258,30 @@ def person_distance_tier(
     ):
         return "very_close"
 
-    # If a person box is clipped by frame edges, width-only distance can be unstable.
-    # Promote clearly "camera-filling" clipped boxes to close/very_close.
+    # If a person box is clipped, width-only distance can be unstable.
+    # Use vertical edge touch (top/bottom) for promotion; side clipping alone is too noisy.
     if box_xyxy is not None:
         x1, y1, x2, y2 = box_xyxy
-        edge_touch = (
-            x1 <= 2
-            or y1 <= 2
-            or x2 >= (frame_width_px - 2)
-            or y2 >= (frame_height_px - 2)
-        )
-        if edge_touch and (width_ratio >= 0.62 or height_ratio >= 0.92):
+        edge_touch_x = x1 <= 2 or x2 >= (frame_width_px - 2)
+        edge_touch_y = y1 <= 2 or y2 >= (frame_height_px - 2)
+        if edge_touch_y and (height_ratio >= 0.86 or (height_ratio >= 0.72 and width_ratio >= 0.50)):
             return "very_close"
-        if edge_touch and (width_ratio >= 0.24 or height_ratio >= 0.50):
+        if edge_touch_y and (height_ratio >= 0.50 or width_ratio >= 0.34):
+            return "close"
+        # Side-only clipping often happens during occlusion; avoid promoting to very_close.
+        if edge_touch_x and not edge_touch_y and dist_meters <= 2.1 and close_size_match:
             return "close"
 
     # Close should need stronger evidence than a single noisy cue.
     # This avoids false "close" at ~3m when only one ratio spikes.
     if (
-        dist_meters <= 1.9
-        or (dist_meters <= 2.6 and close_size_match)
-        or (height_ratio >= 0.74 and width_ratio >= 0.24)
+        dist_meters <= 1.7
+        or (dist_meters <= 2.4 and close_size_match)
+        or (dist_meters <= 3.2 and height_ratio >= 0.80 and width_ratio >= 0.30)
     ):
         return "close"
 
-    if dist_meters <= 4.8 or near_size_match:
+    if dist_meters <= 5.2 or near_size_match:
         return "near"
     return "far"
 
