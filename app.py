@@ -273,11 +273,11 @@ def person_distance_tier(
             return "close"
 
     # Close should need stronger evidence than a single noisy cue.
-    # This avoids false "close" at ~3m when only one ratio spikes.
+    # Keep this conservative so normal seated framing is usually near, not close.
     if (
-        dist_meters <= 1.7
-        or (dist_meters <= 2.4 and close_size_match)
-        or (dist_meters <= 3.2 and height_ratio >= 0.80 and width_ratio >= 0.30)
+        dist_meters <= 1.45
+        or (dist_meters <= 2.15 and close_size_match and height_ratio >= 0.56)
+        or (height_ratio >= 0.84 and width_ratio >= 0.34)
     ):
         return "close"
 
@@ -612,7 +612,12 @@ def process_frame(frame):
                 "hazard_level": hazard_level
             }
             people_found.append(person_obj)
-            person_is_hazard = person_stable and tier in {"very_close", "close"}
+            # Seated people at a table are often close in frame but usually not an immediate collision hazard.
+            person_is_hazard = (
+                person_stable
+                and tier in {"very_close", "close"}
+                and act_str != "sitting"
+            )
             if person_is_hazard:
                 hazards.append({
                     "label": "person",
