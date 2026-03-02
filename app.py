@@ -73,7 +73,12 @@ pose_brain = YOLO(POSE_MODEL_NAME)
 paddle_ocr = None
 if PaddleOCR is not None:
     try:
-        paddle_ocr = PaddleOCR(use_angle_cls=True, lang="en", use_gpu=False, show_log=False)
+        paddle_ocr = PaddleOCR(
+            lang="en",
+            use_textline_orientation=True,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+        )
         print("✅ PaddleOCR loaded")
     except Exception as e:
         paddle_ocr = None

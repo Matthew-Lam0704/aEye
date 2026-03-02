@@ -4,3 +4,4 @@ ultralytics
 numpy
 pytesseract
 paddleocr
+paddlepaddle
